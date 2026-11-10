@@ -1,0 +1,14 @@
+fastapi>=0.115
+uvicorn[standard]
+sqlalchemy[asyncio]>=2.0
+asyncpg
+alembic
+pydantic>=2
+pydantic-settings
+email-validator
+bcrypt
+PyJWT
+python-multipart
+slowapi
+aiosmtplib
+# redis   # only if RATE_LIMIT_STORAGE_URI is a redis:// URL
