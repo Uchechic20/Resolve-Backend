@@ -17,7 +17,7 @@ engine = create_async_engine(
     max_overflow=settings.db_max_overflow,
     pool_pre_ping=True,  # drop dead connections instead of failing a request
     # 3. Tell asyncpg to use SSL for Neon
-    connect_args={"ssl": True} if "neon.tech" in str(db_url) else {}
+    connect_args={"ssl": True,"statement_cache_size":0} if "neon.tech" in str(db_url) else {}
 )
 
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False)
