@@ -53,7 +53,14 @@ class AuthService:
             full_name=data.full_name,
         )
         await self.session.commit()
-        return user, security.create_verify_token(user.id)
+
+        # --- FIX: Print the token for Render logs ---
+        verify_token = security.create_verify_token(user.id)
+        print(f"\n=============================================")
+        print(f"VERIFICATION LINK: https://resolve-backend-2.onrender.com/auth/verify-email?token={verify_token}")
+        print(f"=============================================\n")
+
+        return user, verify_token
 
     async def verify_email(self, token: str) -> User:
         # FIX: decode_token returns a dictionary, not an object
@@ -73,7 +80,14 @@ class AuthService:
         user = await self.users.get_by_email(email)
         if user is None or user.is_verified or not user.is_active:
             return None
-        return security.create_verify_token(user.id)
+
+        # --- FIX: Print the token for Render logs ---
+        verify_token = security.create_verify_token(user.id)
+        print(f"\n=============================================")
+        print(f"VERIFICATION LINK: https://resolve-backend-2.onrender.com/auth/verify-email?token={verify_token}")
+        print(f"=============================================\n")
+
+        return verify_token
 
     # ------------------------------------------------------------------ login
     async def login(self, data: UserLogin) -> Token | MfaChallenge:
@@ -131,10 +145,8 @@ class AuthService:
         if await self.revoked.is_revoked(claims.get("jti")):
             raise AuthenticationError("Invalid or expired token")
 
-
         user_id = int(claims.get("sub"))
         user = await self.users.get(user_id)
-
 
         if user is None or not user.is_active or claims.get("token_version") != user.token_version:
             raise AuthenticationError("Invalid or expired token")
@@ -309,5 +321,3 @@ class AuthService:
             access_token=security.create_access_token(user.id, user.token_version, jti=access_jti),
             refresh_token=security.create_refresh_token(user.id, user.token_version, jti=refresh_jti),
         )
-
-    print(f"VERIFICATION LINK: https://resolve-backend-2.onrender.com/auth/verify-email?token={token}")
