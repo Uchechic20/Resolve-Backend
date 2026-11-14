@@ -24,7 +24,6 @@ from app.models.user import User
 from app.models.ticket import Ticket, TicketComment, TicketEvent, Attachment
 from app.models.revoked_token import RevokedToken
 from app.models.department import Department, Category
-
 # --------------------------------------------------------------------------
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -34,11 +33,12 @@ if resolve_dir not in sys.path:
 
 setup_logging()
 
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # 1. Create all missing tables in the database before starting
+    # 1. Force rebuild: Drop all tables first, then create them perfectly
     async with engine.begin() as conn:
+        # WARNING: This deletes all existing data in the database on every restart!
+        await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
 
     worker = None
