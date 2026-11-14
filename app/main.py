@@ -1,15 +1,11 @@
-"""Resolve: application entrypoint.
-
-
-"""
+"""Resolve: application entrypoint."""
 import asyncio
 import contextlib
 from contextlib import asynccontextmanager
 import sys
 import os
-from fastapi import FastAPI, Request,Depends
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.params import Depends
 from fastapi.responses import JSONResponse
 from slowapi.errors import RateLimitExceeded
 
@@ -21,26 +17,38 @@ from app.core.request_context import set_client_ip
 from app.core.security_headers import SecurityHeadersMiddleware
 from app.exceptions import STATUS_MAP, AuthenticationError, DomainError
 from app.routers import all_routers
-from  app.core.config import settings
-from app.scripts.create_admin import current_dir
+from app.core.config import settings
 
-current_dir=os.path.dirname(os.path.abspath(__file__))
-resolve_dir=os.path.dirname(current_dir)
+# --- CRITICAL: Import all models here so Base.metadata knows they exist ---
+from app.models.user import User
+from app.models.ticket import Ticket, TicketComment, TicketEvent, Attachment
+from app.models.revoked_token import RevokedToken
+from app.models.department import Department, Category
+
+# --------------------------------------------------------------------------
+
+current_dir = os.path.dirname(os.path.abspath(__file__))
+resolve_dir = os.path.dirname(current_dir)
 if resolve_dir not in sys.path:
-    sys.path.insert(0,resolve_dir)
-from app.core.config import Settings
+    sys.path.insert(0, resolve_dir)
 
 setup_logging()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    worker = None
-    if settings.run_worker_in_api:  # single-instance convenience; prefer app.scripts.run_worker
-        from app.core import run_forever
+    # 1. Create all missing tables in the database before starting
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
 
+    worker = None
+    if settings.run_worker_in_api:
+        from app.core import run_forever
         worker = asyncio.create_task(run_forever())
+
     yield
+
+    # 2. Cleanup on shutdown
     if worker:
         worker.cancel()
         with contextlib.suppress(asyncio.CancelledError):
@@ -55,16 +63,10 @@ app = FastAPI(
     # Don't publish interactive docs in production.
     docs_url=None if settings.is_production else "/docs",
     redoc_url=None if settings.is_production else "/redoc",
-    openapi_url=None if settings.is_production else "/openapi.json")
+    openapi_url=None if settings.is_production else "/openapi.json"
+)
 
-
-@app.on_event("startup")
-async def init_db():
-    async with engine.begin() as conn:
-        # This automatically creates all missing tables with correct Enums
-        await conn.run_sync(Base.metadata.create_all)
 if settings.cors_origins:
-
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],  # Allows all origins
@@ -72,9 +74,6 @@ if settings.cors_origins:
         allow_methods=["*"],  # Allows all methods (GET, POST, etc.)
         allow_headers=["*"],  # Allows all headers
     )
-
-
-
 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, rate_limit_handler)
@@ -110,6 +109,7 @@ async def domain_error_handler(request: Request, exc: DomainError):
 
 for router in all_routers:
     app.include_router(router)
+
 
 @app.get("/health", tags=["meta"])
 async def health():
