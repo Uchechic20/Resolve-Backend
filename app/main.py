@@ -13,7 +13,7 @@ from fastapi.params import Depends
 from fastapi.responses import JSONResponse
 from slowapi.errors import RateLimitExceeded
 
-
+from app.models.base import Base
 from app.core.database import engine
 from app.core.log import setup_logging
 from app.core.rate_limit import limiter, rate_limit_handler
@@ -57,6 +57,12 @@ app = FastAPI(
     redoc_url=None if settings.is_production else "/redoc",
     openapi_url=None if settings.is_production else "/openapi.json")
 
+
+@app.on_event("startup")
+async def init_db():
+    async with engine.begin() as conn:
+        # This automatically creates all missing tables with correct Enums
+        await conn.run_sync(Base.metadata.create_all)
 if settings.cors_origins:
 
     app.add_middleware(

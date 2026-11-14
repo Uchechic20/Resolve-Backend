@@ -1,6 +1,6 @@
 """Resolve: Ticket and its child tables (comments, audit events, attachments)."""
 from datetime import datetime
-
+from sqlalchemy import Enum as SQLAlchemyEnum
 from sqlalchemy import (
     Boolean,
     DateTime,

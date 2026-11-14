@@ -45,7 +45,7 @@ class Settings(BaseSettings):
     email_backend: Literal["console", "smtp"] = "smtp"
     email_from: str = "Resolve <no-reply@localhost>"
     smtp_host: str | None = None
-    smtp_port: int = 587
+    smtp_port: int = 2525
     smtp_user: str | None = None
     smtp_password: str | None = None
     smtp_starttls: bool = True

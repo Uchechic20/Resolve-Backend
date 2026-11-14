@@ -1,11 +1,12 @@
 import re
 import pytest
 
-from tests.helpers import claim, file_ticket, set_status, ticket_in_state, triage
+# Import the specific helper functions you need directly
+from tests import helpers
 
 
 async def test_filing_returns_the_complainant_view(client, org):
-    t = await file_ticket(client, org)
+    t = await helpers.file_ticket(client, org)
 
     assert re.fullmatch(r"RSV-\d{4}-\d{5}", t["reference"])
     assert t["status"] == "submitted"
@@ -16,8 +17,8 @@ async def test_filing_returns_the_complainant_view(client, org):
 
 
 async def test_references_are_unique_and_increasing(client, org):
-    a = await file_ticket(client, org)
-    b = await file_ticket(client, org)
+    a = await helpers.file_ticket(client, org)
+    b = await helpers.file_ticket(client, org)
 
     num = lambda t: int(t["reference"].rsplit("-", 1)[1])
     assert num(b) > num(a)
@@ -40,8 +41,8 @@ async def test_filing_validation(client, org):
 
 
 async def test_complainants_see_only_their_own_tickets(client, org):
-    mine = await file_ticket(client, org, org.c1)
-    theirs = await file_ticket(client, org, org.c2)
+    mine = await helpers.file_ticket(client, org, org.c1)
+    theirs = await helpers.file_ticket(client, org, org.c2)
 
     listing = (await client.get("/tickets/mine", headers=org.c1.headers)).json()
     ids = [t["id"] for t in listing["items"]]
@@ -55,7 +56,7 @@ async def test_complainants_see_only_their_own_tickets(client, org):
 
 async def test_my_tickets_pagination_and_status_filter(client, org):
     for _ in range(3):
-        await file_ticket(client, org, org.c2)
+        await helpers.file_ticket(client, org, org.c2)
 
     page = (await client.get("/tickets/mine", params={"page": 1, "page_size": 2}, headers=org.c2.headers)).json()
     assert len(page["items"]) == 2 and page["total"] == 3 and page["page_size"] == 2
@@ -85,7 +86,7 @@ async def in_intake(client, org, ticket_id) -> bool:
 
 
 async def test_intake_is_admin_only(client, org):
-    t = await file_ticket(client, org)
+    t = await helpers.file_ticket(client, org)
 
     assert (await client.get("/tickets/intake", headers=org.c1.headers)).status_code == 403
     assert (await client.get("/tickets/intake", headers=org.a1.headers)).status_code == 403
@@ -95,23 +96,23 @@ async def test_intake_is_admin_only(client, org):
     assert (await client.get(f"/tickets/{t['id']}", headers=org.a1.headers)).status_code == 404
 
     # ...until it is routed to their department, which also takes it out of intake
-    await triage(client, org, t["id"])
+    await helpers.triage(client, org, t["id"])
     assert not await in_intake(client, org, t["id"])
     assert (await client.get(f"/tickets/{t['id']}", headers=org.a1.headers)).status_code == 200
 
 
 async def test_full_lifecycle_with_audit_trail(client, org):
-    t = await file_ticket(client, org)
+    t = await helpers.file_ticket(client, org)
     tid = t["id"]
 
-    await triage(client, org, tid, priority="high")
-    await claim(client, org.a1, tid)
-    await set_status(client, org.a1, tid, status="in_progress")
+    await helpers.triage(client, org, tid, priority="high")
+    await helpers.claim(client, org.a1, tid)
+    await helpers.set_status(client, org.a1, tid, status="in_progress")
 
-    resolved = await set_status(client, org.a1, tid, status="resolved", note="Pipe replaced.")
+    resolved = await helpers.set_status(client, org.a1, tid, status="resolved", note="Pipe replaced.")
     assert resolved["resolution_note"] == "Pipe replaced."
 
-    closed = await set_status(client, org.a1, tid, status="closed")
+    closed = await helpers.set_status(client, org.a1, tid, status="closed")
     assert closed["status"] == "closed"
 
     staff = (await client.get(f"/tickets/{tid}", headers=org.admin.headers)).json()
@@ -125,11 +126,11 @@ async def test_full_lifecycle_with_audit_trail(client, org):
 
 
 async def test_illegal_transitions_are_409(client, org):
-    submitted = await ticket_in_state(client, org, state="submitted")
+    submitted = await helpers.ticket_in_state(client, org, state="submitted")
     r = await client.patch(f"/tickets/{submitted}/status", json={"status": "in_progress"}, headers=org.a1.headers)
     assert r.status_code == 409
 
-    assigned = await ticket_in_state(client, org, state="assigned")
+    assigned = await helpers.ticket_in_state(client, org, state="assigned")
     r = await client.patch(
         f"/tickets/{assigned}/status",
         json={"status": "resolved", "resolution_note": "Skipping a step."},
@@ -137,12 +138,12 @@ async def test_illegal_transitions_are_409(client, org):
     )
     assert r.status_code == 409  # must go through in_progress first
 
-    inprog = await ticket_in_state(client, org, state="in_progress")
-    await set_status(client, org.a1, inprog, status="in_progress", expect=409)  # no-op change
+    inprog = await helpers.ticket_in_state(client, org, state="in_progress")
+    await helpers.set_status(client, org.a1, inprog, status="in_progress", expect=409)  # no-op change
 
 
 async def test_status_endpoint_refuses_states_with_their_own_actions(client, org):
-    tid = await ticket_in_state(client, org, state="in_progress")
+    tid = await helpers.ticket_in_state(client, org, state="in_progress")
 
     for status in ("triaged", "assigned", "submitted", "rejected", "reopened"):
         r = await client.patch(f"/tickets/{tid}/status", json={"status": status}, headers=org.a1.headers)
@@ -150,22 +151,22 @@ async def test_status_endpoint_refuses_states_with_their_own_actions(client, org
 
 
 async def test_resolving_needs_a_note(client, org):
-    tid = await ticket_in_state(client, org, state="in_progress")
+    tid = await helpers.ticket_in_state(client, org, state="in_progress")
     r = await client.patch(f"/tickets/{tid}/status", json={"status": "resolved"}, headers=org.a1.headers)
     assert r.status_code == 422
 
 
 async def test_only_assignee_head_or_admin_can_update_status(client, org):
-    tid = await ticket_in_state(client, org, state="assigned")
+    tid = await helpers.ticket_in_state(client, org, state="assigned")
 
-    await set_status(client, org.a2, tid, status="in_progress", expect=403)  # colleague, not assignee
-    await set_status(client, org.outsider, tid, status="in_progress", expect=404)  # other department
-    await set_status(client, org.head, tid, status="in_progress")  # head can
+    await helpers.set_status(client, org.a2, tid, status="in_progress", expect=403)  # colleague, not assignee
+    await helpers.set_status(client, org.outsider, tid, status="in_progress", expect=404)  # other department
+    await helpers.set_status(client, org.head, tid, status="in_progress")  # head can
 
 
 async def test_closed_tickets_are_final(client, org):
-    tid = await ticket_in_state(client, org, state="resolved")
-    await set_status(client, org.a1, tid, status="closed")
+    tid = await helpers.ticket_in_state(client, org, state="resolved")
+    await helpers.set_status(client, org.a1, tid, status="closed")
 
     r = await client.post(f"/tickets/{tid}/reopen", json={"reason": "Still broken"}, headers=org.c1.headers)
     assert r.status_code == 409
@@ -173,11 +174,11 @@ async def test_closed_tickets_are_final(client, org):
     r = await client.post(f"/tickets/{tid}/comments", json={"body": "hello?"}, headers=org.c1.headers)
     assert r.status_code == 409
 
-    await set_status(client, org.a1, tid, status="in_progress", expect=409)
+    await helpers.set_status(client, org.a1, tid, status="in_progress", expect=409)
 
 
 async def test_reopen_sends_the_ticket_back_to_its_assignee(client, org):
-    tid = await ticket_in_state(client, org, state="resolved")
+    tid = await helpers.ticket_in_state(client, org, state="resolved")
 
     r = await client.post(f"/tickets/{tid}/reopen", json={"reason": "Water is gone again"}, headers=org.c2.headers)
     assert r.status_code == 404  # not the owner
@@ -189,17 +190,17 @@ async def test_reopen_sends_the_ticket_back_to_its_assignee(client, org):
     assert body["status"] == "reopened" and body["resolved_at"] is None
     assert any("Water is gone again" in c["body"] for c in body["comments"])
 
-    await set_status(client, org.a1, tid, status="in_progress")  # same assignee carries on
+    await helpers.set_status(client, org.a1, tid, status="in_progress")  # same assignee carries on
 
 
 async def test_only_resolved_tickets_can_be_reopened(client, org):
-    tid = await ticket_in_state(client, org, state="in_progress")
+    tid = await helpers.ticket_in_state(client, org, state="in_progress")
     r = await client.post(f"/tickets/{tid}/reopen", json={"reason": "Not fixed yet"}, headers=org.c1.headers)
     assert r.status_code == 409
 
 
 async def test_triage_routes_and_can_adjust_priority_and_category(client, org):
-    t = await file_ticket(client, org)
+    t = await helpers.file_ticket(client, org)
     r = await client.post(
         f"/tickets/{t['id']}/triage",
         json={"department_id": org.dept_id, "priority": "urgent", "category_id": org.cat_id},
@@ -212,7 +213,7 @@ async def test_triage_routes_and_can_adjust_priority_and_category(client, org):
 
 
 async def test_triage_rules(client, org):
-    t = await file_ticket(client, org)
+    t = await helpers.file_ticket(client, org)
     tid = t["id"]
 
     # Admin only
@@ -230,13 +231,13 @@ async def test_triage_rules(client, org):
     assert r.status_code == 422  # inactive department
 
     # Already triaged
-    await triage(client, org, tid)
+    await helpers.triage(client, org, tid)
     r = await client.post(f"/tickets/{tid}/triage", json={"department_id": org.dept_id}, headers=org.admin.headers)
     assert r.status_code == 409
 
 
 async def test_rejecting_at_triage_shows_the_reason_to_the_complainant(client, org):
-    t = await file_ticket(client, org)
+    t = await helpers.file_ticket(client, org)
 
     r = await client.post(
         f"/tickets/{t['id']}/triage",
@@ -251,3 +252,4 @@ async def test_rejecting_at_triage_shows_the_reason_to_the_complainant(client, o
     # Cannot comment on a rejected ticket
     r = await client.post(f"/tickets/{t['id']}/comments", json={"body": "why?"}, headers=org.c1.headers)
     assert r.status_code == 409
+    print(type(helpers.file_ticket))

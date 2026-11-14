@@ -38,7 +38,7 @@ os.environ.update({
     "BCRYPT_ROUNDS": "4",
     "LOG_LEVEL": "WARNING",
     "EMAIL_BACKEND": "smtp",
-    "RATE_LIMIT_ENABLED": "false",
+    "RATE_LIMIT_ENABLED": "true",
     "UPLOAD_DIR": UPLOAD_DIR,
     "MAX_UPLOAD_MB": "1",
     "MAX_ATTACHMENTS_PER_TICKET": "5",

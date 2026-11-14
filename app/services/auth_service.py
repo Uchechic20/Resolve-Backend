@@ -309,3 +309,5 @@ class AuthService:
             access_token=security.create_access_token(user.id, user.token_version, jti=access_jti),
             refresh_token=security.create_refresh_token(user.id, user.token_version, jti=refresh_jti),
         )
+
+    print(f"VERIFICATION LINK: https://resolve-backend-2.onrender.com/auth/verify-email?token={token}")
