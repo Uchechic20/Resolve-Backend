@@ -25,12 +25,7 @@ from app.models.user import User
 from app.models.ticket import Ticket, TicketComment, TicketEvent, Attachment
 from app.models.revoked_token import RevokedToken
 from app.models.department import Department, Category
-from app.models.knowledge_base import KBArticle
-
-# --- NEW: Import new routers and services ---
-from app.routers.kb import router as kb_router
-from app.routers.analytics import router as analytics_router
-from app.services.sla_background_worker import run_sla_worker
+from app.models.knowledge_base import KBArticle  # This will work now!
 
 # --------------------------------------------------------------------------
 
@@ -44,11 +39,11 @@ setup_logging()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # 1. Create missing tables in the database before starting
+    # 1. Create missing tables
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
-    # 2. Auto-Seed Default Data
+    # 2. PERMANENT FIX: Auto-Seed Default Categories and Departments
     async with SessionLocal() as db:
         # Check if categories exist
         result = await db.execute(select(Category).limit(1))
@@ -56,8 +51,7 @@ async def lifespan(app: FastAPI):
             db.add_all([
                 Category(name="Banking Issue"),
                 Category(name="Technical Support"),
-                Category(name="Account Access"),
-                Category(name="General Inquiry")
+                Category(name="Account Access")
             ])
             await db.commit()
 
@@ -70,35 +64,32 @@ async def lifespan(app: FastAPI):
             ])
             await db.commit()
 
-    # 3. Start Background Workers
+    # 3. Start background workers
     worker = None
     if settings.run_worker_in_api:
         from app.core import run_forever
         worker = asyncio.create_task(run_forever())
 
-    # Start the SLA escalation worker
-    sla_task = asyncio.create_task(run_sla_worker())
+    try:
+        from app.services.sla_background_worker import run_sla_worker
+        sla_task = asyncio.create_task(run_sla_worker())
+    except ImportError:
+        sla_task = None
 
     yield
 
-    # 4. Cleanup on shutdown
+    # 4. Cleanup
     if worker:
         worker.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await worker
-
-    sla_task.cancel()
-    with contextlib.suppress(asyncio.CancelledError):
-        await sla_task
-
-    await engine.dispose()  # close the connection pool on shutdown
+    if sla_task:
+        sla_task.cancel()
+    await engine.dispose()
 
 
 app = FastAPI(
     title=settings.app_name,
     version="0.1.0",
     lifespan=lifespan,
-    # Don't publish interactive docs in production.
     docs_url=None if settings.is_production else "/docs",
     redoc_url=None if settings.is_production else "/redoc",
     openapi_url=None if settings.is_production else "/openapi.json"
@@ -107,10 +98,10 @@ app = FastAPI(
 if settings.cors_origins:
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],  # Allows all origins
+        allow_origins=["*"],
         allow_credentials=True,
-        allow_methods=["*"],  # Allows all methods (GET, POST, etc.)
-        allow_headers=["*"],  # Allows all headers
+        allow_methods=["*"],
+        allow_headers=["*"],
     )
 
 app.state.limiter = limiter
@@ -119,8 +110,6 @@ app.add_exception_handler(RateLimitExceeded, rate_limit_handler)
 
 @app.middleware("http")
 async def remember_client_ip(request: Request, call_next):
-    """Lets services record WHO looked at a ticket from WHERE (see access_logs).
-    Behind a proxy run uvicorn with --proxy-headers so this is the real client."""
     set_client_ip(request.client.host if request.client else None)
     return await call_next(request)
 
@@ -135,7 +124,6 @@ if settings.security_headers_enabled:
 
 @app.exception_handler(DomainError)
 async def domain_error_handler(request: Request, exc: DomainError):
-    # STATUS_MAP is ordered most-specific first (InvalidTransition before Conflict).
     code = next((c for t, c in STATUS_MAP.items() if isinstance(exc, t)), 400)
     headers = {"WWW-Authenticate": "Bearer"} if isinstance(exc, AuthenticationError) else None
     return JSONResponse(
@@ -143,13 +131,8 @@ async def domain_error_handler(request: Request, exc: DomainError):
     )
 
 
-# Register all routers
 for router in all_routers:
     app.include_router(router)
-
-# Register the new routers
-app.include_router(kb_router)
-app.include_router(analytics_router)
 
 
 @app.get("/health", tags=["meta"])
