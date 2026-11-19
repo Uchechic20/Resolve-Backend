@@ -82,3 +82,25 @@ TicketSvc = Annotated[TicketService, Depends(get_ticket_service)]
 AdminSvc = Annotated[AdminService, Depends(get_admin_service)]
 AttachmentSvc = Annotated[AttachmentService, Depends(get_attachment_service)]
 MfaSvc=Annotated[MfaService,Depends(get_mfa_service)]
+from fastapi import Depends, HTTPException, status
+from app.models.user import User
+
+
+def require_role(*allowed_roles: str):
+    """
+    Dependency factory to restrict access to specific roles.
+    Usage: Depends(require_role("admin", "agent"))
+    """
+
+    def role_checker(current_user: User = Depends(get_current_user)):
+        # Handle both Enum and string roles safely
+        user_role = current_user.role.value if hasattr(current_user.role, 'value') else current_user.role
+
+        if user_role.lower() not in [r.lower() for r in allowed_roles]:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Operation not permitted. Requires one of: {', '.join(allowed_roles)}"
+            )
+        return current_user
+
+    return role_checker

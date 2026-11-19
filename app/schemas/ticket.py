@@ -136,8 +136,6 @@ class TicketTriage(BaseModel):
         elif self.department_id is None:
             raise ValueError("department_id is required unless rejecting")
         return self
-
-
 class TicketAssign(BaseModel):
     """Dept head/admin assigns. Agents use /claim, which needs no body."""
     assignee_id: int

@@ -19,5 +19,7 @@ engine = create_async_engine(
     # 3. Tell asyncpg to use SSL for Neon
     connect_args={"ssl": True,"statement_cache_size":0} if "neon.tech" in str(db_url) else {}
 )
-
+async def get_db():
+    async with SessionLocal() as session:
+        yield session
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False)

@@ -18,6 +18,7 @@ from app.core.request_context import set_client_ip
 from app.core.security_headers import SecurityHeadersMiddleware
 from app.exceptions import STATUS_MAP, AuthenticationError, DomainError
 from app.routers import all_routers
+from app.routers.status import router as status_router
 from app.core.config import settings
 
 # --- CRITICAL: Import all models here so Base.metadata knows they exist ---
@@ -25,7 +26,8 @@ from app.models.user import User
 from app.models.ticket import Ticket, TicketComment, TicketEvent, Attachment
 from app.models.revoked_token import RevokedToken
 from app.models.department import Department, Category
-from app.models.knowledge_base import KBArticle  # This will work now!
+from app.models.knowledge_base import KBArticle
+from app.models.service_status import ServiceOutage, TicketApproval
 
 # --------------------------------------------------------------------------
 
@@ -43,7 +45,7 @@ async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
-    # 2. PERMANENT FIX: Auto-Seed Default Categories and Departments
+    # 2. Auto-Seed Default Categories and Departments
     async with SessionLocal() as db:
         # Check if categories exist
         result = await db.execute(select(Category).limit(1))
@@ -70,11 +72,15 @@ async def lifespan(app: FastAPI):
         from app.core import run_forever
         worker = asyncio.create_task(run_forever())
 
+    # Start SLA and Auto-Close tasks
+    sla_task = None
+    auto_close_task = None
     try:
-        from app.services.sla_background_worker import run_sla_worker
+        from app.services.sla_background_worker import run_sla_worker, run_auto_close_worker
         sla_task = asyncio.create_task(run_sla_worker())
+        auto_close_task = asyncio.create_task(run_auto_close_worker())
     except ImportError:
-        sla_task = None
+        pass
 
     yield
 
@@ -83,6 +89,8 @@ async def lifespan(app: FastAPI):
         worker.cancel()
     if sla_task:
         sla_task.cancel()
+    if auto_close_task:
+        auto_close_task.cancel()
     await engine.dispose()
 
 
@@ -131,8 +139,12 @@ async def domain_error_handler(request: Request, exc: DomainError):
     )
 
 
+# Register all existing routers
 for router in all_routers:
     app.include_router(router)
+
+# Register the new Service Status router
+app.include_router(status_router)
 
 
 @app.get("/health", tags=["meta"])

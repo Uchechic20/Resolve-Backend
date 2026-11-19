@@ -23,7 +23,8 @@ class TicketStatus(str, enum.Enum):
     CLOSED = "closed"
     REJECTED = "rejected"
     REOPENED = "reopened"
-
+    ESCALATED ="escalated"
+    DUPLICATED ="duplicated"
 
 class TicketPriority(str, enum.Enum):
     LOW = "low"

@@ -67,7 +67,7 @@ async def login_form(
     form: Annotated[OAuth2PasswordRequestForm, Depends()],
     auth: AuthSvc,
 ):
-    print(f"DEBUG->username:'{form.username}',password lenght:{len(form.password)}")
+
     try:
         creds=UserLogin(email=form.username,password=form.password)
     except ValidationError:

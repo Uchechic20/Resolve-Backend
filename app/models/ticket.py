@@ -11,6 +11,8 @@ from sqlalchemy import (
     String,
     Text,
     func,
+    Float,
+
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -43,6 +45,9 @@ class Ticket(TimestampMixin, Base):
     category_id: Mapped[int | None] = mapped_column(
         ForeignKey("categories.id", ondelete="SET NULL")
     )
+    sla_deadline:Mapped[datetime|None]=mapped_column(DateTime(timezone=True),nullable=True)
+    sentiment_score:Mapped[float|None]=mapped_column(Float,nullable=True)
+    satisfaction_rating:Mapped[int|None]=mapped_column(Integer,nullable=True)
     # NULL until an admin triages the ticket.
     department_id: Mapped[int | None] = mapped_column(
         ForeignKey("departments.id", ondelete="SET NULL")
