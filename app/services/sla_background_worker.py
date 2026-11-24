@@ -1,12 +1,10 @@
 import asyncio
-from datetime import datetime, timezone, timedelta
-from sqlalchemy import select, update
+from sqlalchemy import select, update, func, text
 from app.core.database import SessionLocal
 from app.models.ticket import Ticket
 from app.models.enums import TicketStatus, TicketPriority
 
 # Import the webhook function from our event system
-# (Make sure you created app/services/event_system.py from the previous step!)
 try:
     from app.services.event_system import fire_webhook
 except ImportError:
@@ -19,25 +17,22 @@ async def run_sla_worker():
     while True:
         try:
             async with SessionLocal() as db:
-                now = datetime.now(timezone.utc)
-                warning_time = now + timedelta(hours=1)
-
                 # ---------------------------------------------------------
                 # 1. PREDICTIVE SLA WARNING (Deadline is within the next hour)
                 # ---------------------------------------------------------
                 stmt_warning = select(Ticket).where(
-                    Ticket.sla_deadline <= warning_time,
-                    Ticket.sla_deadline > now,
+                    # Database calculates "now + 1 hour"
+                    Ticket.sla_deadline <= func.now() + text("INTERVAL '1 hour'"),
+                    Ticket.sla_deadline > func.now(),
                     Ticket.status.notin_([TicketStatus.RESOLVED, TicketStatus.CLOSED, TicketStatus.ESCALATED])
                 )
                 warning_tickets = (await db.execute(stmt_warning)).scalars().all()
 
                 for t in warning_tickets:
-                    # Fire a webhook to alert the agent (e.g., Slack/Teams)
                     await fire_webhook(db, "ticket.sla_warning", {
                         "ticket_id": t.id,
                         "title": t.title,
-                        "deadline": t.sla_deadline.isoformat()
+                        "deadline": str(t.sla_deadline)
                     })
 
                 # ---------------------------------------------------------
@@ -46,14 +41,14 @@ async def run_sla_worker():
                 stmt_breach = (
                     update(Ticket)
                     .where(
-                        Ticket.sla_deadline < now,
+                        # Database compares column to its own "now"
+                        Ticket.sla_deadline < func.now(),
                         Ticket.status.notin_([TicketStatus.RESOLVED, TicketStatus.CLOSED, TicketStatus.ESCALATED])
                     )
                     .values(status=TicketStatus.ESCALATED, priority=TicketPriority.HIGH)
                     .returning(Ticket.id)
                 )
 
-                # Execute and get the IDs of the tickets that were just escalated
                 breached_ids = (await db.execute(stmt_breach)).scalars().all()
 
                 for b_id in breached_ids:
@@ -79,15 +74,13 @@ async def run_auto_close_worker():
     while True:
         try:
             async with SessionLocal() as db:
-                now = datetime.now(timezone.utc)
-                cut_off = now - timedelta(hours=72)
-
                 # Find tickets that were resolved more than 72 hours ago
                 stmt = (
                     update(Ticket)
                     .where(
                         Ticket.status == TicketStatus.RESOLVED,
-                        Ticket.updated_at <= cut_off
+                        # Database calculates "now - 72 hours"
+                        Ticket.updated_at <= func.now() - text("INTERVAL '72 hours'")
                     )
                     .values(status=TicketStatus.CLOSED)
                     .returning(Ticket.id)
