@@ -1,13 +1,13 @@
-"""Resolve: outgoing email.
-
-
-"""
+"""Resolve: outgoing email."""
 import logging
-from email.message import EmailMessage
+import httpx
 
 from app.core.config import settings
 
 logger = logging.getLogger("resolve.mailer")
+
+# Default SendLiberty API endpoint
+SENDLIBERTY_API_URL = "https://api.sendliberty.com/v1/send"
 
 
 async def send_email(to: str, subject: str, body: str) -> None:
@@ -15,7 +15,45 @@ async def send_email(to: str, subject: str, body: str) -> None:
         logger.info("EMAIL (console backend, dev only)\nTo: %s\nSubject: %s\n\n%s", to, subject, body)
         return
 
-    import aiosmtplib  # imported lazily so the console backend needs no SMTP lib
+    if settings.email_backend == "api":
+        # 🔒 Read the key directly from your config.py settings
+        if not settings.sendliberty_api_key:
+            logger.error("SENDLIBERTY_API_KEY is missing from settings. Email not sent.")
+            return
+
+        headers = {
+            "Authorization": f"Bearer {settings.sendliberty_api_key}",
+            "Content-Type": "application/json",
+            "Accept": "application/json"
+        }
+
+        payload = {
+            "from": settings.email_from,
+            "to": [to],
+            "subject": subject,
+            "text": body,
+        }
+
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    SENDLIBERTY_API_URL,
+                    json=payload,
+                    headers=headers,
+                    timeout=15.0
+                )
+                response.raise_for_status()
+                logger.info(f"Email successfully sent to {to} via SendLiberty API.")
+
+        except httpx.HTTPStatusError as exc:
+            logger.error(f"SendLiberty API Error {exc.response.status_code}: {exc.response.text}")
+        except Exception as exc:
+            logger.error(f"Network error while sending email via SendLiberty: {exc}")
+        return
+
+    # Fallback to SMTP (if you ever switch back)
+    import aiosmtplib
+    from email.message import EmailMessage
 
     msg = EmailMessage()
     msg["From"] = settings.email_from
