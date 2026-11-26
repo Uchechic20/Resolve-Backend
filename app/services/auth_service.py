@@ -1,13 +1,4 @@
-"""Resolve: accounts and sessions.
-
-Registration, login (with optional MFA), refresh-token rotation, logout,
-password reset / change, and MFA enrolment.
-
-How sessions can be ended early (the old "tokens cannot be revoked" limitation):
-- one token  -> its `jti` goes in the revoked_tokens table (logout, refresh rotation)
-- all tokens -> `users.token_version` is bumped (logout-all, password change,
-                role change, MFA changes, refresh-token reuse)
-"""
+"""Resolve: accounts and sessions."""
 import json
 import uuid
 from datetime import datetime, timezone
@@ -44,49 +35,44 @@ class AuthService:
 
     # ------------------------------------------------------------ registration
     async def register(self, data: UserRegister) -> tuple[User, str]:
-        """Returns (user, verification_token). The router emails the token."""
+        """Registers a user and returns the verification token."""
         if await self.users.get_by_email(data.email):
             raise ConflictError("An account with this email already exists")
+
         user = await self.users.create(
             email=data.email,
             password_hash=await security.hash_password(data.password),
             full_name=data.full_name,
         )
+
+        # User is NOT verified until they click the email link
+        user.is_verified = False
         await self.session.commit()
 
-        # --- FIX: Print the token for Render logs ---
+        # Generate the token for the email
         verify_token = security.create_verify_token(user.id)
-        print(f"\n=============================================")
-        print(f"VERIFICATION LINK: https://resolve-backend-2.onrender.com/auth/verify-email?token={verify_token}")
-        print(f"=============================================\n")
-
         return user, verify_token
 
     async def verify_email(self, token: str) -> User:
-        # FIX: decode_token returns a dictionary, not an object
-        claims = security.decode_token(token, security.VERIFY)
+        """Validates the token and marks the user as verified."""
+        claims = security.decode_claims(token, security.VERIFY)
         user_id = int(claims.get("sub"))
 
         user = await self.users.get(user_id)
         if user is None:
             raise AuthenticationError("Invalid or expired token")
+
         user.is_verified = True
         await self.session.commit()
         return user
 
     async def resend_verification(self, email: str) -> str | None:
-        """A fresh token to email, or None. The router answers identically either
-        way, so this cannot be used to discover which emails have accounts."""
+        """Generates a new token if the user exists and is not yet verified."""
         user = await self.users.get_by_email(email)
         if user is None or user.is_verified or not user.is_active:
             return None
 
-        # --- FIX: Print the token for Render logs ---
         verify_token = security.create_verify_token(user.id)
-        print(f"\n=============================================")
-        print(f"VERIFICATION LINK: https://resolve-backend-2.onrender.com/auth/verify-email?token={verify_token}")
-        print(f"=============================================\n")
-
         return verify_token
 
     # ------------------------------------------------------------------ login
@@ -99,14 +85,17 @@ class AuthService:
             raise AuthenticationError("Incorrect email or password")
         if not user.is_active:
             raise AuthenticationError("This account has been deactivated")
+
+        # 🚨 Crucial: Block login if the email isn't verified
+        if not user.is_verified:
+            raise AuthenticationError("Please verify your email before logging in.")
+
         if user.mfa_enabled:
             return MfaChallenge(mfa_token=security.create_mfa_token(user.id))
         return self._tokens(user)
 
     async def login_mfa(self, data: MfaLogin) -> Token:
         claims = security.decode_claims(data.mfa_token, security.MFA)
-
-        # FIX: Use dictionary access for the user ID
         user_id = int(claims.get("sub"))
         user = await self.users.get(user_id)
 
@@ -160,15 +149,12 @@ class AuthService:
         """Rotation: every refresh retires the old refresh token."""
         claims = security.decode_claims(refresh_token, security.REFRESH)
 
-        # 1. Use .get("sub") and convert to int
         user_id = int(claims.get("sub"))
         user = await self.users.get(user_id)
 
-        # 2. Check "token_version"
         if user is None or not user.is_active or claims.get("token_version") != user.token_version:
             raise AuthenticationError("Invalid or expired token")
 
-        # 3. Use .get("jti")
         jti = claims.get("jti")
         reason = await self.revoked.revocation_reason(jti)
 
@@ -180,7 +166,6 @@ class AuthService:
         if reason is not None:
             raise AuthenticationError("Invalid or expired token")
 
-        # 4. Use .get("exp") for expiration
         await self.revoked.revoke(jti, user.id, claims.get("exp"), reason="rotated")
         await self.session.commit()
         return self._tokens(user)
@@ -196,7 +181,6 @@ class AuthService:
             except AuthenticationError:
                 rc = None
 
-            # 6. Compare user IDs properly
             if rc and int(rc.get("sub")) == user.id:
                 await self.revoked.revoke(rc.get("jti"), user.id, rc.get("exp"))
 
@@ -217,7 +201,6 @@ class AuthService:
     async def reset_password(self, token: str, new_password: str) -> None:
         claims = security.decode_claims(token, security.RESET)
 
-        # FIX: Use dictionary access for sub and pwf
         user_id = int(claims.get("sub"))
         user = await self.users.get(user_id)
 

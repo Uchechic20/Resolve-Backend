@@ -10,13 +10,13 @@ logger = logging.getLogger("resolve.mailer")
 SENDLIBERTY_API_URL = "https://api.sendliberty.com/v1/send"
 
 
-async def send_email(to: str, subject: str, body: str) -> None:
+async def send_templated_email(to: str, template: str, data: dict) -> None:
+    """Sends a templated email via API (bypasses Render SMTP blocks)."""
     if settings.email_backend == "console":
-        logger.info("EMAIL (console backend, dev only)\nTo: %s\nSubject: %s\n\n%s", to, subject, body)
+        logger.info("EMAIL TEMPLATE (console backend, dev only)\nTo: %s\nTemplate: %s\nData: %s", to, template, data)
         return
 
     if settings.email_backend == "api":
-        # 🔒 Read the key directly from your config.py settings
         if not settings.sendliberty_api_key:
             logger.error("SENDLIBERTY_API_KEY is missing from settings. Email not sent.")
             return
@@ -27,11 +27,11 @@ async def send_email(to: str, subject: str, body: str) -> None:
             "Accept": "application/json"
         }
 
+        # EXACT JSON PAYLOAD YOU REQUESTED
         payload = {
-            "from": settings.email_from,
-            "to": [to],
-            "subject": subject,
-            "text": body,
+            "template": template,
+            "to": to,
+            "data": data
         }
 
         try:
@@ -43,7 +43,7 @@ async def send_email(to: str, subject: str, body: str) -> None:
                     timeout=15.0
                 )
                 response.raise_for_status()
-                logger.info(f"Email successfully sent to {to} via SendLiberty API.")
+                logger.info(f"Templated email '{template}' successfully sent to {to}.")
 
         except httpx.HTTPStatusError as exc:
             logger.error(f"SendLiberty API Error {exc.response.status_code}: {exc.response.text}")
@@ -51,15 +51,16 @@ async def send_email(to: str, subject: str, body: str) -> None:
             logger.error(f"Network error while sending email via SendLiberty: {exc}")
         return
 
-    # Fallback to SMTP (if you ever switch back)
+    # Fallback to standard SMTP
     import aiosmtplib
     from email.message import EmailMessage
 
     msg = EmailMessage()
     msg["From"] = settings.email_from
     msg["To"] = to
-    msg["Subject"] = subject
-    msg.set_content(body)
+    msg["Subject"] = f"Resolve Notification ({template})"
+    # Basic fallback body if API fails
+    msg.set_content(f"Template: {template}\nData: {data}")
 
     implicit_tls = settings.smtp_port == 465
     await aiosmtplib.send(
@@ -74,18 +75,18 @@ async def send_email(to: str, subject: str, body: str) -> None:
     )
 
 
-async def send_verification_email(email: str, token: str) -> None:
-    """Runs as a background task, so it must never raise: a mail outage
-    should not turn a successful registration into a server error."""
+async def send_verification_email(email: str, token: str, name: str = "User") -> None:
+    """Runs as a background task to send the verification template."""
     link = f"{settings.public_base_url.rstrip('/')}/auth/verify-email?token={token}"
+
     try:
-        await send_email(
-            email,
-            "Verify your Resolve account",
-            "Welcome to Resolve.\n\n"
-            f"Confirm your email address to start filing complaints:\n{link}\n\n"
-            f"This link expires in {settings.verify_token_hours} hours. "
-            "If you didn't create an account, you can ignore this message.",
+        await send_templated_email(
+            to=email,
+            template="verify-email",
+            data={
+                "name": name,
+                "link": link
+            }
         )
     except Exception:
         logger.exception("Failed to send verification email to %s", email)
